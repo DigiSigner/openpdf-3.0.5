@@ -64,6 +64,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.w3c.dom.Node;
 
 /**
@@ -315,6 +316,7 @@ public class AcroFields {
                     lastIDRNumber = indirectObject.getNumber();
                 }
                 PdfIndirectReference parentRef = null;
+                Set<PdfDictionary> visitedAnnots = new HashSet<PdfDictionary>();
 
                 while (annot != null) {
                     dic.mergeDifferent(annot);
@@ -338,8 +340,14 @@ public class AcroFields {
                         parentRef = asIndirectObject;
                     }
                     if (parentIDRNumber != -1 && lastIDRNumber != parentIDRNumber) {
+                        visitedAnnots.add(annot);
                         annot = annot.getAsDict(PdfName.PARENT);
                         lastIDRNumber = parentIDRNumber;
+
+                        // break the cycle when an annotation is revisited
+                        if (visitedAnnots.contains(annot)) {
+                            break;
+                        }
                     } else {
                         annot = null;
                     }
