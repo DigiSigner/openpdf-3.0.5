@@ -288,9 +288,9 @@ class PdfStamperImp extends PdfWriter {
             producer = oldInfo.getAsString(PdfName.PRODUCER).toUnicodeString();
         }
         if (producer == null) {
-            producer = Document.getVersion();
-        } else if (!producer.contains(Document.getProduct())) {
-            producer = producer + "; modified using " + Document.getVersion();
+            producer = "Signed using DigiSigner (www.digisigner.com)";
+        } else if (!producer.contains("DigiSigner")) {
+            producer = producer + "; signed using DigiSigner (www.digisigner.com)";
         }
 
         // if we explicitly set Producer key

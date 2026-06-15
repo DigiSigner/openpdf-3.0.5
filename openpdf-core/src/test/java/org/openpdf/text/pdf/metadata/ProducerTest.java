@@ -50,7 +50,7 @@ public class ProducerTest {
         PdfStamper stamp = new PdfStamper(reader, baos);
         stamp.close();
         String sData = baos.toString();
-        Assertions.assertTrue(sData.contains("(LibreOffice 6.0; modified using OpenPDF"));
+        Assertions.assertTrue(sData.contains("(LibreOffice 6.0; signed using DigiSigner"));
 
 
     }
