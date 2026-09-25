@@ -134,13 +134,12 @@ public class GraphicsState {
         knockout = source.knockout;
     }
 
-    /**
-     * Get the current transformation matrix.
-     *
-     * @return current transformation matrix
-     */
     public Matrix getCtm() {
         return ctm;
+    }
+
+    public void setCtm(Matrix ctm) {
+        this.ctm = ctm;
     }
 
     public float getCharacterSpacing() {

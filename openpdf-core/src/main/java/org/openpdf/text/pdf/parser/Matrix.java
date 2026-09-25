@@ -104,7 +104,7 @@ public class Matrix {
     /**
      * constructs a new Matrix with identity.
      */
-    Matrix() {
+    public Matrix() {
     }
 
     /**
@@ -113,7 +113,7 @@ public class Matrix {
      * @param tx
      * @param ty
      */
-    Matrix(float tx, float ty) {
+    public Matrix(float tx, float ty) {
         vals[I31] = tx;
         vals[I32] = ty;
     }
@@ -128,7 +128,7 @@ public class Matrix {
      * @param e
      * @param f
      */
-    Matrix(float a, float b, float c, float d, float e, float f) {
+    public Matrix(float a, float b, float c, float d, float e, float f) {
         vals[I11] = a;
         vals[I12] = b;
         vals[I13] = 0;
