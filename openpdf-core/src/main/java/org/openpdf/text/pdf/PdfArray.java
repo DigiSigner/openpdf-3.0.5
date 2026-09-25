@@ -543,4 +543,12 @@ public class PdfArray extends PdfObject {
         }
         return ref;
     }
+
+    public double[] asDoubleArray() {
+        double[] rslt = new double[size()];
+        for (int k = 0; k < rslt.length; ++k) {
+            rslt[k] = getAsNumber(k).doubleValue();
+        }
+        return rslt;
+    }
 }

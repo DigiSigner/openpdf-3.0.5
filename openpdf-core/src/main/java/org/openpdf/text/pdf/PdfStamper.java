@@ -614,6 +614,17 @@ public class PdfStamper
     }
 
     /**
+     * Determines if all annotations are flattened on close.
+     *
+     * @param flat <CODE>true</CODE> to flatten the FreeText annotations, <CODE>false</CODE>
+     *             (the default) to keep the FreeText annotations as active content.
+     */
+
+    public void setAnnotationFlattening(final boolean flat) {
+        stamper.setAnnotationFlattening(flat);
+    }
+
+    /**
      * Adds an annotation of form field in a specific page. This page number can be overridden with
      * {@link PdfAnnotation#setPlaceInPage(int)}.
      *

@@ -46,7 +46,6 @@
  */
 package org.openpdf.text.pdf;
 
-import org.openpdf.text.Document;
 import org.openpdf.text.DocumentException;
 import org.openpdf.text.ExceptionConverter;
 import org.openpdf.text.Image;
@@ -59,10 +58,13 @@ import org.openpdf.text.pdf.interfaces.PdfViewerPreferences;
 import org.openpdf.text.pdf.internal.PdfViewerPreferencesImp;
 import org.openpdf.text.xml.xmp.XmpReader;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Point2D;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -76,6 +78,7 @@ class PdfStamperImp extends PdfWriter {
     protected AcroFields acroFields;
     protected boolean flat = false;
     protected boolean flatFreeText = false;
+    protected boolean flatAnnotations = false;
     protected int[] namePtr = {0};
     protected Set<String> partialFlattening = new HashSet<>();
     protected boolean useVp = false;
@@ -106,6 +109,8 @@ class PdfStamperImp extends PdfWriter {
     private Calendar modificationDate = null;
     private boolean updateMetadata = true;
     private boolean updateDocInfo = true;
+
+    private double[] DEFAULT_MATRIX = {1, 0, 0, 1, 0, 0};
 
     /**
      * Creates new PdfStamperImp.
@@ -226,6 +231,11 @@ class PdfStamperImp extends PdfWriter {
         if (flatFreeText) {
             flatFreeTextFields();
         }
+        if (flatAnnotations) {
+            flatFreeTextFields();
+            flatAnnotations();
+        }
+
         addFieldResources();
         PdfDictionary catalog = reader.getCatalog();
         PdfDictionary pages = (PdfDictionary) PdfReader.getPdfObject(catalog.get(PdfName.PAGES));
@@ -884,6 +894,10 @@ class PdfStamperImp extends PdfWriter {
         this.flatFreeText = flat;
     }
 
+    public void setAnnotationFlattening(boolean flatAnnotations) {
+        this.flatAnnotations = flatAnnotations;
+    }
+
     boolean partialFormFlattening(String name) {
         getAcroFields();
         if (acroFields.getXfa().isXfaPresent()) {
@@ -1281,6 +1295,262 @@ class PdfStamperImp extends PdfWriter {
                 pageDic.remove(PdfName.ANNOTS);
             }
         }
+    }
+
+    private void flatAnnotations() {
+        if (append) {
+            throw new IllegalArgumentException("Annotation flattening is not supported in append mode");
+        }
+
+        for (int pageNumber = 1; pageNumber <= reader.getNumberOfPages(); pageNumber++) {
+            flattenPageAnnotations(pageNumber);
+        }
+    }
+
+    private void flattenPageAnnotations(int pageNumber) {
+        PdfDictionary page = reader.getPageN(pageNumber);
+        PdfArray annotations = page.getAsArray(PdfName.ANNOTS);
+
+        if (annotations == null || annotations.isEmpty()) {
+            return;
+        }
+
+        int index = 0;
+        while (index < annotations.size()) {
+            PdfDictionary annotation = getAnnotation(annotations, index);
+
+            if (annotation == null || !isFlattenableAnnotation(annotation)) {
+                index++;
+                continue;
+            }
+
+            if (renderAnnotation(annotation, pageNumber)) {
+                annotations.remove(index);
+            } else {
+                index++;
+            }
+        }
+
+        if (annotations.isEmpty()) {
+            PdfReader.killIndirect(page.get(PdfName.ANNOTS));
+            page.remove(PdfName.ANNOTS);
+        }
+    }
+
+    private PdfDictionary getAnnotation(PdfArray annotations, int index) {
+        PdfObject object = annotations.getDirectObject(index);
+
+        if (object instanceof PdfIndirectReference && !object.isIndirect()) {
+            return null;
+        }
+
+        return object instanceof PdfDictionary ? (PdfDictionary) object : null;
+    }
+
+    private boolean isFlattenableAnnotation(PdfDictionary annotation) {
+        PdfObject subtype = annotation.get(PdfName.SUBTYPE);
+        if (PdfName.FREETEXT.equals(subtype) || PdfName.WIDGET.equals(subtype)) {
+            return false;
+        }
+
+        PdfNumber flagsObject = annotation.getAsNumber(PdfName.F);
+        int flags = flagsObject != null ? flagsObject.intValue() : 0;
+
+        return (flags & PdfFormField.FLAGS_PRINT) != 0
+                && (flags & PdfFormField.FLAGS_HIDDEN) == 0;
+    }
+
+    private boolean renderAnnotation(PdfDictionary annotation, int pageNumber) {
+        PdfAppearance appearance = resolveAnnotationAppearance(annotation);
+        if (appearance == null) {
+            return false;
+        }
+
+        Rectangle annotationBox = getAnnotationRectangle(annotation);
+        PdfDictionary appearanceStream = getNormalAppearanceStream(annotation);
+        Rectangle sourceBox = getAppearanceBoundingBox(
+                appearance, appearanceStream, annotationBox);
+
+        renderAppearance(
+                getOverContent(pageNumber),
+                appearance,
+                annotationBox,
+                sourceBox,
+                appearanceStream);
+
+        return true;
+    }
+
+    private Rectangle getAnnotationRectangle(PdfDictionary annotation) {
+        return PdfReader.getNormalizedRectangle(
+                annotation.getAsArray(PdfName.RECT));
+    }
+
+    private PdfDictionary getAppearanceDictionary(PdfDictionary annotation) {
+        PdfObject appearance = annotation.get(PdfName.AP);
+        if (appearance == null) {
+            return null;
+        }
+
+        PdfObject resolved = PdfReader.getPdfObject(appearance);
+        return resolved instanceof PdfDictionary ? (PdfDictionary) resolved : null;
+    }
+
+    private PdfDictionary getNormalAppearanceStream(PdfDictionary annotation) {
+        PdfDictionary appearance = getAppearanceDictionary(annotation);
+        if (appearance == null) {
+            return null;
+        }
+
+        PdfObject normal = appearance.get(PdfName.N);
+        PdfObject resolved = PdfReader.getPdfObject(normal);
+        return resolved instanceof PdfStream ? (PdfDictionary) resolved : null;
+    }
+
+    private PdfAppearance resolveAnnotationAppearance(PdfDictionary annotation) {
+        PdfDictionary appearanceDictionary = getAppearanceDictionary(annotation);
+        if (appearanceDictionary == null) {
+            return null;
+        }
+
+        PdfObject normalAppearance = appearanceDictionary.get(PdfName.N);
+        if (normalAppearance == null) {
+            return null;
+        }
+
+        PdfObject resolved = PdfReader.getPdfObject(normalAppearance);
+
+        if (resolved instanceof PdfStream) {
+            ((PdfDictionary) resolved).put(PdfName.SUBTYPE, PdfName.FORM);
+            return normalAppearance instanceof PdfIndirectReference
+                    ? new PdfAppearance((PdfIndirectReference) normalAppearance)
+                    : null;
+        }
+
+        if (!resolved.isDictionary()) {
+            return null;
+        }
+
+        PdfName state = appearanceDictionary.getAsName(PdfName.AS);
+        if (state == null) {
+            return null;
+        }
+
+        PdfObject stateAppearance = ((PdfDictionary) resolved).get(state);
+        if (!(stateAppearance instanceof PdfIndirectReference)) {
+            return null;
+        }
+
+        PdfIndirectReference reference = (PdfIndirectReference) stateAppearance;
+        PdfObject stateObject = PdfReader.getPdfObject(reference);
+
+        if (stateObject instanceof PdfDictionary) {
+            ((PdfDictionary) stateObject).put(PdfName.SUBTYPE, PdfName.FORM);
+        }
+
+        return new PdfAppearance(reference);
+    }
+
+    private Rectangle getAppearanceBoundingBox(
+            PdfAppearance appearance,
+            PdfDictionary appearanceStream,
+            Rectangle annotationBox) {
+
+        if (appearanceStream != null) {
+            PdfArray bbox = appearanceStream.getAsArray(PdfName.BBOX);
+            if (bbox != null) {
+                return PdfReader.getNormalizedRectangle(bbox);
+            }
+        }
+
+        Rectangle fallback = new Rectangle(
+                0,
+                0,
+                annotationBox.getWidth(),
+                annotationBox.getHeight());
+        appearance.setBoundingBox(fallback);
+        return fallback;
+    }
+
+    private void renderAppearance(
+            PdfContentByte content,
+            PdfAppearance appearance,
+            Rectangle annotationBox,
+            Rectangle sourceBox,
+            PdfDictionary appearanceStream) {
+
+        content.setLiteral("Q ");
+
+        double[] matrix = getAppearanceMatrix(appearanceStream);
+        if (hasNonDefaultMatrix(matrix)) {
+            Rectangle transformedBox = transformBBoxByMatrix(sourceBox, matrix);
+            addScaledAppearance(content, appearance, annotationBox,
+                    transformedBox.getWidth(), transformedBox.getHeight());
+        } else {
+            addScaledAppearance(content, appearance, annotationBox,
+                    sourceBox.getWidth(), sourceBox.getHeight());
+        }
+
+        content.setLiteral("q ");
+    }
+
+    private double[] getAppearanceMatrix(PdfDictionary appearanceStream) {
+        if (appearanceStream == null) {
+            return null;
+        }
+
+        PdfArray matrix = appearanceStream.getAsArray(PdfName.MATRIX);
+        return matrix != null ? matrix.asDoubleArray() : null;
+    }
+
+    private boolean hasNonDefaultMatrix(double[] matrix) {
+        return matrix != null && !Arrays.equals(DEFAULT_MATRIX, matrix);
+    }
+
+    private void addScaledAppearance(
+            PdfContentByte content,
+            PdfAppearance appearance,
+            Rectangle target,
+            double sourceWidth,
+            double sourceHeight) {
+
+        if (sourceWidth == 0 || sourceHeight == 0) {
+            return;
+        }
+
+        content.addTemplate(
+                appearance,
+                target.getWidth() / sourceWidth, 0,
+                0, target.getHeight() / sourceHeight,
+                target.getLeft(), target.getBottom());
+    }
+
+    private Rectangle transformBBoxByMatrix(Rectangle bBox, double[] matrix) {
+        List<Double> xArr = new ArrayList<>();
+        List<Double> yArr = new ArrayList<>();
+        Point2D p1 = transformPoint(bBox.getLeft(), bBox.getBottom(), matrix);
+        xArr.add(p1.getX());
+        yArr.add(p1.getY());
+        Point2D p2 = transformPoint(bBox.getRight(), bBox.getTop(), matrix);
+        xArr.add(p2.getX());
+        yArr.add(p2.getY());
+        Point2D p3 = transformPoint(bBox.getLeft(), bBox.getTop(), matrix);
+        xArr.add(p3.getX());
+        yArr.add(p3.getY());
+        Point2D p4 = transformPoint(bBox.getRight(), bBox.getBottom(), matrix);
+        xArr.add(p4.getX());
+        yArr.add(p4.getY());
+
+        return new Rectangle((Collections.min(xArr)).floatValue(),
+                (Collections.min(yArr)).floatValue(),
+                (Collections.max(xArr)).floatValue(),
+                (Collections.max(yArr)).floatValue());
+    }
+
+    private Point2D transformPoint(double x, double y, double[] matrix) {
+        double transX = matrix[0] * x + matrix[2] * y + matrix[4];
+        double transY = matrix[1] * x + matrix[3] * y + matrix[5];
+        return new Point2D.Double(transX, transY);
     }
 
     /**
