@@ -48,6 +48,10 @@ package org.openpdf.text.pdf;
 
 import org.openpdf.text.DocumentException;
 import org.openpdf.text.ExceptionConverter;
+import org.openpdf.text.pdf.fonts.cmaps.CMap;
+import org.openpdf.text.pdf.fonts.cmaps.CMapParser;
+
+import java.io.ByteArrayInputStream;
 import java.util.HashMap;
 
 
@@ -287,6 +291,34 @@ public class DocumentFont extends BaseFont {
             } else {
                 fillEncoding(null);
             }
+
+            try {
+                CMap cMap = null;
+                PdfObject toUnicode =
+                        PdfReader.getPdfObjectRelease(font.get(PdfName.TOUNICODE));
+
+                if (toUnicode instanceof PRStream) {
+                    byte[] touni = PdfReader.getStreamBytes((PRStream) toUnicode);
+                    cMap = new CMapParser().parse(new ByteArrayInputStream(touni));
+                }
+
+                if (cMap != null) {
+                    byte[] code = new byte[1];
+
+                    for (int i = 0; i <= 0xFF; i++) {
+                        code[0] = (byte) i;
+
+                        String unicode = cMap.lookup(code, 0, 1);
+
+                        if (unicode != null && unicode.length() == 1) {
+                            uni2byte.put(unicode.charAt(0), i);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) {
+                throw new ExceptionConverter(ex);
+            }
         } else {
             if (enc.isName()) {
                 fillEncoding((PdfName) enc);
@@ -397,6 +429,11 @@ public class DocumentFont extends BaseFont {
                 ury = t;
             }
         }
+
+        float maxAscent = Math.max(ury, Ascender);
+        float minDescent = Math.min(lly, Descender);
+        Ascender = maxAscent * 1000 / (maxAscent - minDescent);
+        Descender = minDescent * 1000 / (maxAscent - minDescent);
     }
 
     private void fillEncoding(PdfName encoding) {
